@@ -54,12 +54,18 @@ benchmark:
 	go test ./test -bench=. -benchmem
 
 # Build all binaries
-build: build-server build-examples
+build: build-server build-gateways build-examples
 
 # Build server
 build-server:
 	@echo "🔨 Building SGCSF server..."
 	go build $(GOFLAGS) $(LDFLAGS) -o bin/sgcsf-server cmd/server/main.go
+
+# Build gateways
+build-gateways:
+	@echo "🔨 Building SGCSF gateways..."
+	go build $(GOFLAGS) $(LDFLAGS) -o bin/ground-gateway cmd/ground-gateway/main.go
+	go build $(GOFLAGS) $(LDFLAGS) -o bin/satellite-gateway cmd/satellite-gateway/main.go
 
 # Build examples
 build-examples:
@@ -197,7 +203,9 @@ help:
 	@echo "  release         Build release binaries for all platforms"
 	@echo ""
 	@echo "Running:"
-	@echo "  run-server              Run SGCSF server"
+	@echo "  run-server              Run SGCSF server (legacy)"
+	@echo "  run-ground-gateway      Run Ground Gateway"
+	@echo "  run-satellite-gateway   Run Satellite Gateway"
 	@echo "  run-sensor-publisher    Run sensor publisher example"
 	@echo "  run-ground-subscriber   Run ground subscriber example"
 	@echo "  run-sync-demo          Run sync communication demo"
