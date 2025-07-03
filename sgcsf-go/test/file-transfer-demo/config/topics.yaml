@@ -1,0 +1,402 @@
+# SGCSF Topic配置文件
+# 定义系统中所有可用的topic及其配置
+
+version: "1.0"
+last_updated: "2024-01-15T10:30:00Z"
+description: "SGCSF系统Topic配置，支持文件传输、系统管理和监控"
+
+# Topic命名空间定义
+namespaces:
+  file:
+    description: "文件传输相关topic"
+    prefix: "file"
+  system:
+    description: "系统管理相关topic"  
+    prefix: "system"
+  monitoring:
+    description: "监控和遥测相关topic"
+    prefix: "monitoring"
+  satellite:
+    description: "卫星专用topic"
+    prefix: "satellite"
+  ground:
+    description: "地面专用topic"
+    prefix: "ground"
+
+# Topic定义
+topics:
+  # 文件传输相关topic
+  - name: "file/upload/request"
+    namespace: "file"
+    description: "文件上传请求"
+    type: "unicast"
+    qos: "at_least_once"
+    persistent: false
+    retention_seconds: 300
+    max_size_mb: 10
+    compression: true
+    encryption: false
+    subscribers:
+      - "satellite/*"  # 所有卫星节点
+    publishers:
+      - "ground-control"
+      - "ground-*"
+    metadata:
+      category: "file-transfer"
+      priority: "high"
+
+  - name: "file/upload/start"
+    namespace: "file"
+    description: "开始文件上传"
+    type: "unicast"
+    qos: "at_least_once"
+    persistent: false
+    retention_seconds: 300
+    max_size_mb: 1
+    compression: false
+    encryption: false
+    subscribers:
+      - "satellite/*"
+    publishers:
+      - "ground-*"
+
+  - name: "file/upload/chunk"
+    namespace: "file"
+    description: "文件上传分片数据"
+    type: "unicast"
+    qos: "at_least_once"
+    persistent: false
+    retention_seconds: 60
+    max_size_mb: 2
+    compression: true
+    encryption: false
+    subscribers:
+      - "satellite/*"
+    publishers:
+      - "ground-*"
+
+  - name: "file/upload/complete"
+    namespace: "file"
+    description: "文件上传完成确认"
+    type: "unicast"
+    qos: "exactly_once"
+    persistent: true
+    retention_seconds: 600
+    max_size_mb: 1
+    compression: false
+    encryption: false
+    subscribers:
+      - "satellite/*"
+    publishers:
+      - "ground-*"
+
+  - name: "file/download/request"
+    namespace: "file"
+    description: "文件下载请求"
+    type: "unicast"
+    qos: "at_least_once"
+    persistent: false
+    retention_seconds: 300
+    max_size_mb: 1
+    compression: false
+    encryption: false
+    subscribers:
+      - "satellite/*"
+    publishers:
+      - "ground-*"
+
+  - name: "file/download/response"
+    namespace: "file"
+    description: "文件下载响应"
+    type: "unicast"
+    qos: "at_least_once"
+    persistent: false
+    retention_seconds: 300
+    max_size_mb: 10
+    compression: false
+    encryption: false
+    subscribers:
+      - "ground-*"
+    publishers:
+      - "satellite/*"
+
+  - name: "file/download/chunk/{request_id}"
+    namespace: "file"
+    description: "文件下载分片数据（动态topic）"
+    type: "unicast"
+    qos: "at_least_once"
+    persistent: false
+    retention_seconds: 300
+    max_size_mb: 2
+    compression: true
+    encryption: false
+    is_template: true  # 表示这是一个模板topic
+    subscribers:
+      - "ground-*"
+    publishers:
+      - "satellite/*"
+
+  # 系统管理相关topic
+  - name: "system/heartbeat"
+    namespace: "system"
+    description: "系统心跳消息"
+    type: "broadcast"
+    qos: "at_most_once"
+    persistent: false
+    retention_seconds: 30
+    max_size_mb: 1
+    compression: false
+    encryption: false
+    subscribers:
+      - "*"  # 所有客户端
+    publishers:
+      - "*"
+
+  - name: "system/command"
+    namespace: "system"
+    description: "系统控制命令"
+    type: "unicast"
+    qos: "exactly_once"
+    persistent: true
+    retention_seconds: 3600
+    max_size_mb: 1
+    compression: false
+    encryption: true
+    subscribers:
+      - "satellite/*"
+      - "ground-gateway"
+    publishers:
+      - "ground-control"
+    metadata:
+      security_level: "high"
+      audit_required: true
+
+  - name: "system/status/report"
+    namespace: "system"
+    description: "系统状态报告"
+    type: "broadcast"
+    qos: "at_least_once"
+    persistent: false
+    retention_seconds: 600
+    max_size_mb: 5
+    compression: true
+    encryption: false
+    subscribers:
+      - "ground-*"
+      - "monitoring-*"
+    publishers:
+      - "satellite/*"
+
+  # 卫星相关topic
+  - name: "satellite/status"
+    namespace: "satellite"
+    description: "卫星状态信息"
+    type: "broadcast"
+    qos: "at_least_once"
+    persistent: false
+    retention_seconds: 300
+    max_size_mb: 2
+    compression: true
+    encryption: false
+    subscribers:
+      - "ground-*"
+      - "monitoring-*"
+    publishers:
+      - "satellite/*"
+
+  - name: "satellite/telemetry"
+    namespace: "satellite"
+    description: "卫星遥测数据"
+    type: "multicast"
+    qos: "at_most_once"
+    persistent: false
+    retention_seconds: 60
+    max_size_mb: 10
+    compression: true
+    encryption: false
+    subscribers:
+      - "ground-*"
+      - "monitoring-*"
+    publishers:
+      - "satellite/*"
+    metadata:
+      data_type: "telemetry"
+      frequency: "high"
+
+  - name: "satellite/orbit/update"
+    namespace: "satellite"
+    description: "卫星轨道更新信息"
+    type: "broadcast"
+    qos: "exactly_once"
+    persistent: true
+    retention_seconds: 86400  # 24小时
+    max_size_mb: 1
+    compression: false
+    encryption: true
+    subscribers:
+      - "ground-*"
+      - "satellite/*"
+    publishers:
+      - "ground-control"
+      - "orbit-determination"
+
+  # 地面相关topic
+  - name: "ground/command/broadcast"
+    namespace: "ground"
+    description: "地面广播命令"
+    type: "broadcast"
+    qos: "at_least_once"
+    persistent: false
+    retention_seconds: 300
+    max_size_mb: 1
+    compression: false
+    encryption: true
+    subscribers:
+      - "satellite/*"
+    publishers:
+      - "ground-control"
+
+  - name: "ground/emergency"
+    namespace: "ground"
+    description: "紧急情况通知"
+    type: "broadcast"
+    qos: "exactly_once"
+    persistent: true
+    retention_seconds: 3600
+    max_size_mb: 1
+    compression: false
+    encryption: true
+    subscribers:
+      - "*"  # 所有节点
+    publishers:
+      - "ground-control"
+      - "emergency-system"
+    metadata:
+      priority: "critical"
+      security_level: "high"
+
+  # 监控相关topic
+  - name: "monitoring/performance"
+    namespace: "monitoring"
+    description: "性能监控数据"
+    type: "multicast"
+    qos: "at_most_once"
+    persistent: false
+    retention_seconds: 300
+    max_size_mb: 5
+    compression: true
+    encryption: false
+    subscribers:
+      - "monitoring-*"
+      - "ground-dashboard"
+    publishers:
+      - "satellite/*"
+      - "ground-*"
+
+  - name: "monitoring/alerts"
+    namespace: "monitoring"
+    description: "监控告警信息"
+    type: "broadcast"
+    qos: "at_least_once"
+    persistent: true
+    retention_seconds: 1800
+    max_size_mb: 1
+    compression: false
+    encryption: false
+    subscribers:
+      - "ground-*"
+      - "monitoring-*"
+      - "alert-manager"
+    publishers:
+      - "*"
+    metadata:
+      alert_type: "system"
+
+# Topic组定义（相关topic的逻辑分组）
+topic_groups:
+  file_transfer:
+    description: "文件传输相关的所有topic"
+    topics:
+      - "file/upload/request"
+      - "file/upload/start"
+      - "file/upload/chunk"
+      - "file/upload/complete"
+      - "file/download/request"
+      - "file/download/response"
+      - "file/download/chunk/{request_id}"
+
+  system_management:
+    description: "系统管理相关topic"
+    topics:
+      - "system/heartbeat"
+      - "system/command"
+      - "system/status/report"
+
+  satellite_operations:
+    description: "卫星操作相关topic"
+    topics:
+      - "satellite/status"
+      - "satellite/telemetry"
+      - "satellite/orbit/update"
+
+  emergency:
+    description: "紧急情况相关topic"
+    topics:
+      - "ground/emergency"
+      - "monitoring/alerts"
+
+# 动态topic规则
+dynamic_topics:
+  patterns:
+    - pattern: "file/download/chunk/{request_id}"
+      description: "文件下载分片topic，按请求ID动态创建"
+      max_instances: 1000
+      ttl_seconds: 3600
+      auto_cleanup: true
+
+    - pattern: "satellite/{satellite_id}/private"
+      description: "卫星私有通信topic"
+      max_instances: 50
+      ttl_seconds: 86400
+      auto_cleanup: false
+
+    - pattern: "session/{session_id}/data"
+      description: "会话数据topic"
+      max_instances: 500
+      ttl_seconds: 1800
+      auto_cleanup: true
+
+# 访问控制规则
+access_control:
+  rules:
+    - pattern: "system/command"
+      allow_publish: ["ground-control", "admin-*"]
+      allow_subscribe: ["satellite/*", "ground-gateway"]
+      
+    - pattern: "ground/emergency"
+      allow_publish: ["ground-control", "emergency-system"]
+      allow_subscribe: ["*"]
+
+    - pattern: "file/*"
+      allow_publish: ["ground-*", "satellite/*"]
+      allow_subscribe: ["ground-*", "satellite/*"]
+
+    - pattern: "satellite/*/private"
+      allow_publish: ["satellite/*"]
+      allow_subscribe: ["satellite/*", "ground-control"]
+
+# 配置验证规则
+validation:
+  topic_name:
+    pattern: "^[a-z0-9/_\\-{}]+$"
+    max_length: 128
+    
+  namespace:
+    required: true
+    must_exist: true
+    
+  qos:
+    allowed_values: ["at_most_once", "at_least_once", "exactly_once"]
+    
+  type:
+    allowed_values: ["unicast", "multicast", "broadcast"]

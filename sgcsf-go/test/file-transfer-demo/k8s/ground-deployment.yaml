@@ -1,0 +1,200 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ground-file-manager
+  namespace: sgcsf-file-transfer
+  labels:
+    app: ground-file-manager
+    component: ground-station
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ground-file-manager
+  template:
+    metadata:
+      labels:
+        app: ground-file-manager
+        component: ground-station
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: sgcsf-file-transfer
+      containers:
+      - name: ground-file-manager
+        image: sgcsf/ground-file-manager:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8082
+          name: http
+          protocol: TCP
+        - containerPort: 8080
+          name: sgcsf
+          protocol: TCP
+        env:
+        - name: CLIENT_ID
+          value: "ground-control-$(POD_NAME)"
+        - name: SERVER_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: server_addr
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: log_level
+        - name: MAX_CONCURRENT_TRANSFERS
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: max_concurrent_transfers
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        volumeMounts:
+        - name: downloads
+          mountPath: /app/downloads
+        - name: uploads
+          mountPath: /app/uploads
+        - name: temp
+          mountPath: /app/temp
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        - name: credentials
+          mountPath: /app/credentials
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8082
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8082
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: downloads
+        persistentVolumeClaim:
+          claimName: ground-downloads-pvc
+      - name: uploads
+        persistentVolumeClaim:
+          claimName: ground-uploads-pvc
+      - name: temp
+        emptyDir:
+          sizeLimit: "5Gi"
+      - name: config
+        configMap:
+          name: sgcsf-config
+      - name: credentials
+        secret:
+          secretName: sgcsf-credentials
+          defaultMode: 0400
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        node-type: ground-station
+      tolerations:
+      - key: "ground-station"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ground-file-manager
+  namespace: sgcsf-file-transfer
+  labels:
+    app: ground-file-manager
+    component: ground-station
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8082
+    targetPort: 8082
+    protocol: TCP
+    name: http
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: sgcsf
+  selector:
+    app: ground-file-manager
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ground-file-manager-external
+  namespace: sgcsf-file-transfer
+  labels:
+    app: ground-file-manager
+    component: ground-station
+spec:
+  type: NodePort
+  ports:
+  - port: 8082
+    targetPort: 8082
+    nodePort: 30082
+    protocol: TCP
+    name: http
+  selector:
+    app: ground-file-manager
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ground-downloads-pvc
+  namespace: sgcsf-file-transfer
+  labels:
+    app: ground-file-manager
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ground-uploads-pvc
+  namespace: sgcsf-file-transfer
+  labels:
+    app: ground-file-manager
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: fast-ssd

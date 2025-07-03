@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sgcsf-file-transfer
+  namespace: sgcsf-file-transfer
+  labels:
+    app: sgcsf-file-transfer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sgcsf-file-transfer
+  namespace: sgcsf-file-transfer
+  labels:
+    app: sgcsf-file-transfer
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sgcsf-file-transfer
+  namespace: sgcsf-file-transfer
+  labels:
+    app: sgcsf-file-transfer
+subjects:
+- kind: ServiceAccount
+  name: sgcsf-file-transfer
+  namespace: sgcsf-file-transfer
+roleRef:
+  kind: Role
+  name: sgcsf-file-transfer
+  apiGroup: rbac.authorization.k8s.io
+---
+# 如果需要访问节点信息，可以创建ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sgcsf-file-transfer-cluster
+  labels:
+    app: sgcsf-file-transfer
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sgcsf-file-transfer-cluster
+  labels:
+    app: sgcsf-file-transfer
+subjects:
+- kind: ServiceAccount
+  name: sgcsf-file-transfer
+  namespace: sgcsf-file-transfer
+roleRef:
+  kind: ClusterRole
+  name: sgcsf-file-transfer-cluster
+  apiGroup: rbac.authorization.k8s.io

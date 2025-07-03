@@ -1,0 +1,193 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sgcsf-metrics
+  namespace: sgcsf-file-transfer
+  labels:
+    app: sgcsf-file-transfer
+    component: monitoring
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: metrics
+  selector:
+    app: sgcsf-file-transfer
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sgcsf-file-transfer
+  namespace: sgcsf-file-transfer
+  labels:
+    app: sgcsf-file-transfer
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: sgcsf-file-transfer
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+  - port: http
+    interval: 30s
+    path: /metrics
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-sgcsf
+  namespace: sgcsf-file-transfer
+  labels:
+    app: sgcsf-file-transfer
+    component: monitoring
+    grafana_dashboard: "1"
+data:
+  sgcsf-file-transfer.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "SGCSF File Transfer System",
+        "tags": ["sgcsf", "satellite", "file-transfer"],
+        "style": "dark",
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "File Transfer Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(sgcsf_file_transfers_total[5m])",
+                "legendFormat": "Transfer Rate"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Active Transfers",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sgcsf_active_transfers",
+                "legendFormat": "Active"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Satellite Status",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "sgcsf_satellite_status",
+                "legendFormat": "{{satellite_id}}"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Storage Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sgcsf_storage_used_bytes / sgcsf_storage_total_bytes * 100",
+                "legendFormat": "{{satellite_id}}/{{node_id}}"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Network Throughput",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(sgcsf_bytes_transferred_total[5m])",
+                "legendFormat": "{{direction}}"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Error Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(sgcsf_transfer_errors_total[5m])",
+                "legendFormat": "Error Rate"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "30s"
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alerts-sgcsf
+  namespace: sgcsf-file-transfer
+  labels:
+    app: sgcsf-file-transfer
+    component: monitoring
+data:
+  sgcsf-alerts.yml: |
+    groups:
+    - name: sgcsf-file-transfer
+      rules:
+      - alert: SatelliteOffline
+        expr: sgcsf_satellite_status == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Satellite {{ $labels.satellite_id }} is offline"
+          description: "Satellite {{ $labels.satellite_id }} has been offline for more than 5 minutes"
+      
+      - alert: HighTransferFailureRate
+        expr: rate(sgcsf_transfer_errors_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High file transfer failure rate"
+          description: "File transfer failure rate is {{ $value }} per second"
+      
+      - alert: StorageSpaceLow
+        expr: (sgcsf_storage_used_bytes / sgcsf_storage_total_bytes) > 0.9
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low storage space on {{ $labels.satellite_id }}/{{ $labels.node_id }}"
+          description: "Storage usage is above 90% on {{ $labels.satellite_id }}/{{ $labels.node_id }}"
+      
+      - alert: LongQueuedTransfers
+        expr: sgcsf_queued_transfers > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many transfers queued"
+          description: "There are {{ $value }} transfers in the queue for more than 10 minutes"
+      
+      - alert: FileTransferTimeout
+        expr: sgcsf_transfer_duration_seconds > 3600
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "File transfer taking too long"
+          description: "Transfer {{ $labels.transfer_id }} has been running for {{ $value }} seconds"

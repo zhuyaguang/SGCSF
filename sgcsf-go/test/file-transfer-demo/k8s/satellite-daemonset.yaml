@@ -1,0 +1,342 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: satellite-file-agent
+  namespace: sgcsf-file-transfer
+  labels:
+    app: satellite-file-agent
+    component: satellite
+spec:
+  selector:
+    matchLabels:
+      app: satellite-file-agent
+  template:
+    metadata:
+      labels:
+        app: satellite-file-agent
+        component: satellite
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8083"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: sgcsf-file-transfer
+      hostNetwork: false
+      dnsPolicy: ClusterFirst
+      containers:
+      - name: satellite-file-agent
+        image: sgcsf/satellite-file-agent:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8083
+          name: metrics
+          protocol: TCP
+        env:
+        - name: SATELLITE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName  # 使用节点名作为卫星ID
+        - name: NODE_ID
+          value: "node-1"  # 每个卫星节点默认为node-1
+        - name: CLIENT_ID
+          value: "$(SATELLITE_ID)-$(NODE_ID)-agent"
+        - name: SERVER_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: server_addr
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: log_level
+        - name: STORAGE_BASE_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: storage_base_path
+        - name: CHUNK_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: chunk_size
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - name: satellite-storage
+          mountPath: /satellite/storage
+        - name: temp-storage
+          mountPath: /satellite/temp
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+        - name: credentials
+          mountPath: /app/credentials
+          readOnly: true
+        - name: host-time
+          mountPath: /etc/localtime
+          readOnly: true
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "pgrep -f satellite-file-agent"
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "pgrep -f satellite-file-agent"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: satellite-storage
+        hostPath:
+          path: /var/lib/sgcsf/satellite/storage
+          type: DirectoryOrCreate
+      - name: temp-storage
+        emptyDir:
+          sizeLimit: "10Gi"
+      - name: config
+        configMap:
+          name: sgcsf-config
+      - name: credentials
+        secret:
+          secretName: sgcsf-credentials
+          defaultMode: 0400
+      - name: host-time
+        hostPath:
+          path: /etc/localtime
+          type: File
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        node-type: satellite
+      tolerations:
+      - key: "satellite"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      - key: "node.kubernetes.io/not-ready"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300
+      - key: "node.kubernetes.io/unreachable"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+---
+# 为多节点卫星（sat-01, sat-02）创建额外的DaemonSet
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: satellite-file-agent-multi-node
+  namespace: sgcsf-file-transfer
+  labels:
+    app: satellite-file-agent-multi-node
+    component: satellite
+spec:
+  selector:
+    matchLabels:
+      app: satellite-file-agent-multi-node
+  template:
+    metadata:
+      labels:
+        app: satellite-file-agent-multi-node
+        component: satellite
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8083"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: sgcsf-file-transfer
+      hostNetwork: false
+      dnsPolicy: ClusterFirst
+      initContainers:
+      - name: init-multi-nodes
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          # 为sat-01和sat-02创建多个节点目录
+          mkdir -p /satellite/storage/sat-01/node-{1,2,3}
+          mkdir -p /satellite/storage/sat-02/node-{1,2,3}
+          chown -R 1000:1000 /satellite/storage
+        volumeMounts:
+        - name: satellite-storage
+          mountPath: /satellite/storage
+        securityContext:
+          runAsUser: 0
+      containers:
+      # Node-1 代理
+      - name: satellite-agent-node1
+        image: sgcsf/satellite-file-agent:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8083
+          name: metrics1
+          protocol: TCP
+        env:
+        - name: SATELLITE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: NODE_ID
+          value: "node-1"
+        - name: CLIENT_ID
+          value: "$(SATELLITE_ID)-node-1-agent"
+        - name: SERVER_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: server_addr
+        - name: STORAGE_PATH
+          value: "/satellite/storage/$(SATELLITE_ID)/node-1"
+        volumeMounts:
+        - name: satellite-storage
+          mountPath: /satellite/storage
+        - name: temp-storage
+          mountPath: /satellite/temp
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "100m"
+      # Node-2 代理
+      - name: satellite-agent-node2
+        image: sgcsf/satellite-file-agent:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8084
+          name: metrics2
+          protocol: TCP
+        env:
+        - name: SATELLITE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: NODE_ID
+          value: "node-2"
+        - name: CLIENT_ID
+          value: "$(SATELLITE_ID)-node-2-agent"
+        - name: SERVER_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: server_addr
+        - name: STORAGE_PATH
+          value: "/satellite/storage/$(SATELLITE_ID)/node-2"
+        volumeMounts:
+        - name: satellite-storage
+          mountPath: /satellite/storage
+        - name: temp-storage
+          mountPath: /satellite/temp
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "100m"
+      # Node-3 代理
+      - name: satellite-agent-node3
+        image: sgcsf/satellite-file-agent:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8085
+          name: metrics3
+          protocol: TCP
+        env:
+        - name: SATELLITE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: NODE_ID
+          value: "node-3"
+        - name: CLIENT_ID
+          value: "$(SATELLITE_ID)-node-3-agent"
+        - name: SERVER_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: sgcsf-config
+              key: server_addr
+        - name: STORAGE_PATH
+          value: "/satellite/storage/$(SATELLITE_ID)/node-3"
+        volumeMounts:
+        - name: satellite-storage
+          mountPath: /satellite/storage
+        - name: temp-storage
+          mountPath: /satellite/temp
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "256Mi"
+            cpu: "100m"
+      volumes:
+      - name: satellite-storage
+        hostPath:
+          path: /var/lib/sgcsf/satellite/storage
+          type: DirectoryOrCreate
+      - name: temp-storage
+        emptyDir:
+          sizeLimit: "5Gi"
+      - name: config
+        configMap:
+          name: sgcsf-config
+      - name: credentials
+        secret:
+          secretName: sgcsf-credentials
+          defaultMode: 0400
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        satellite-type: multi-node  # 仅在标记为多节点的卫星上运行
+      tolerations:
+      - key: "satellite"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      - key: "node.kubernetes.io/not-ready"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 60
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
